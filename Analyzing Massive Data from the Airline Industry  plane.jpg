@@ -1,0 +1,227 @@
+
+
+import sqlite3
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Setup
+%pip -q install ipython-sql
+%load_ext sql
+%sql sqlite:///airline_industry.db
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q1: How many records are in each table in the database?
+# ────────────────────────────────────────────────────────────────────────────────
+
+%%sql
+SELECT 'flights' AS table_name, COUNT(*) AS num_records FROM flights
+UNION SELECT 'airports', COUNT(*) FROM airports
+UNION SELECT 'planes', COUNT(*) FROM planes
+UNION SELECT 'weather', COUNT(*) FROM weather
+UNION SELECT 'airlines', COUNT(*) FROM airlines;
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q2: Did any flights depart and arrive exactly on time?
+# ────────────────────────────────────────────────────────────────────────────────
+
+# Quick glance at the flights table
+%sql PRAGMA table_info('flights');
+
+%%sql
+SELECT COUNT(*) AS on_time_flights
+FROM flights
+WHERE dep_delay = 0 AND arr_delay = 0;
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q3: What is the mean arrival delay among flights?
+# ────────────────────────────────────────────────────────────────────────────────
+
+%%sql
+SELECT AVG(arr_delay) AS mean_arrival_delay
+FROM flights;
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q4: How many flights had above average arrival delays?
+# ────────────────────────────────────────────────────────────────────────────────
+
+%%sql
+SELECT COUNT(*)
+FROM flights
+WHERE arr_delay > (SELECT AVG(arr_delay) FROM flights);
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q5: What is the relationship between temperature and wind speed?
+# Do changes in the mean temperature throughout the year (by month)
+# reflect changes in mean wind speed?
+# ────────────────────────────────────────────────────────────────────────────────
+
+# Glance at the weather table
+%sql PRAGMA table_info('weather');
+
+%%sql
+SELECT month, AVG(temp) AS mean_temp, AVG(wind_speed) AS mean_wind_speed
+FROM weather
+GROUP BY month
+ORDER BY month;
+
+# Yes, there is an inverse relationship. As the temperature rises in the summer,
+# the wind speed decreases. In the winter, lower temperatures coincide with
+# higher average wind speeds.
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q6: Does the flights table contain the full name of the airline?
+# If not, return the first 10 records with origin, destination, carrier,
+# flight number, and full airline name.
+# ────────────────────────────────────────────────────────────────────────────────
+
+%%sql SELECT * FROM flights LIMIT 5;
+
+%%sql SELECT * FROM airlines LIMIT 5;
+
+# The flights table does not contain the full name of the airline.
+
+%%sql
+SELECT flights.origin,
+       flights.dest AS destination,
+       flights.carrier,
+       flights.flight AS flight_number,
+       airlines.name AS airline_name
+FROM flights
+LEFT JOIN airlines ON flights.carrier = airlines.carrier
+LIMIT 10;
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q7: Which airlines offer the most flights in December?
+# ────────────────────────────────────────────────────────────────────────────────
+
+%%sql
+SELECT flights.carrier,
+       flights.month,
+       airlines.name,
+       COUNT(*) num_flights
+FROM flights
+JOIN airlines ON flights.carrier = airlines.carrier
+WHERE flights.month = 12
+GROUP BY flights.carrier
+ORDER BY num_flights DESC
+LIMIT 10;
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q8: Define a parameterized function to query flights by month using pandas
+# ────────────────────────────────────────────────────────────────────────────────
+
+conn = sqlite3.connect('airline_industry.db')
+
+def num_flights_fun(month_num):
+    query = f"""
+    SELECT flights.carrier,
+           flights.month,
+           airlines.name,
+           COUNT(*) AS num_flights
+    FROM flights
+    JOIN airlines ON flights.carrier = airlines.carrier
+    WHERE flights.month = {month_num}
+    GROUP BY flights.carrier, flights.month, airlines.name
+    ORDER BY num_flights DESC
+    """
+    return pd.read_sql_query(query, conn)
+
+num_flights_fun(12).head(5)  # preview
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q9: Test function with September and January
+# ────────────────────────────────────────────────────────────────────────────────
+
+sept = num_flights_fun(9)
+jan = num_flights_fun(1)
+
+print("September Last 5 Rows")
+print(sept.tail(5))
+print("January Last 5 Rows")
+print(jan.tail(5))
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q10: Top 5 airlines by number of flights in September vs January
+# ────────────────────────────────────────────────────────────────────────────────
+
+print("Top 5 Airlines in September")
+print(sept.head(5))
+print("Top 5 Airlines in January")
+print(jan.head(5))
+
+# Yes, the top five airlines are the same in both September and January,
+# although the order changes by month. The five airlines are:
+# United Air Lines Inc., JetBlue Airways, ExpressJet Airlines Inc.,
+# Delta Air Lines Inc., and American Airlines Inc.
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q11: Define num_flights_fun_all — returns flights for all months
+# ────────────────────────────────────────────────────────────────────────────────
+
+def num_flights_fun_all():
+    query = """
+    SELECT flights.carrier,
+           flights.month,
+           airlines.name,
+           COUNT(*) AS num_flights
+    FROM flights
+    JOIN airlines ON flights.carrier = airlines.carrier
+    GROUP BY flights.carrier, flights.month, airlines.name
+    ORDER BY flights.month, num_flights DESC
+    """
+    return pd.read_sql_query(query, conn)
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q12: Create months_df and preview first 15 rows
+# ────────────────────────────────────────────────────────────────────────────────
+
+months_df = num_flights_fun_all()
+months_df.head(15)
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q13: Plot number of flights per airline per month
+# ────────────────────────────────────────────────────────────────────────────────
+
+plt.figure(figsize=(12, 8))
+sns.lineplot(data=months_df, x='month', y='num_flights', hue='name', marker='o')
+plt.title('Number of Flights by Airline per Month')
+plt.xlabel('Month')
+plt.ylabel('Number of Flights')
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.show()
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q14: Mean arrival delay by airline — which has the highest average delay?
+# ────────────────────────────────────────────────────────────────────────────────
+
+%%sql
+SELECT AVG(flights.arr_delay) AS mean_delay, airlines.name
+FROM flights
+JOIN airlines ON flights.carrier = airlines.carrier
+GROUP BY airlines.name
+ORDER BY mean_delay DESC;
+
+# Across all flights, the airline with the highest arrival delay is Frontier Airlines.
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Q15: Bar plot of mean delay by airline, colored by early vs late
+# ────────────────────────────────────────────────────────────────────────────────
+
+query = """
+SELECT name, AVG(arr_delay) AS mean_delay
+FROM flights
+JOIN airlines ON flights.carrier = airlines.carrier
+GROUP BY name
+ORDER BY mean_delay DESC
+"""
+df = pd.read_sql_query(query, conn)
+df['is_late'] = df['mean_delay'] > 0
+
+plt.figure(figsize=(10, 8))
+sns.barplot(data=df, x='mean_delay', y='name', hue='is_late')
+plt.title("Average Delay by Airline")
+plt.xlabel("Minutes Delayed (Negative = Early)")
+plt.show()
+
+print("The airline with the earliest arrivals is:", df.iloc[-1]['name'], "yay!")
